@@ -177,6 +177,8 @@ h3{font-size:13px;font-weight:600;color:var(--muted);margin:26px 4px 8px}
 .period{text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 12px}
 .cat.biz{border-style:dashed;border-color:var(--accent);color:var(--accent)}
 .cat.biz.on{color:var(--on-accent);border-style:solid}
+.biz-sheet{background:var(--accent-soft)}
+.biz-sheet .grid3+.grid3{border-top-color:color-mix(in srgb,var(--accent) 20%,transparent)}
 .biz-hero{margin-top:12px;background:var(--accent-soft)}
 .tax-line{display:flex;justify-content:space-between;font-size:14px;margin-top:8px;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--accent) 25%,transparent)}
 .donut .t{font-weight:650;font-size:14px;margin-bottom:8px}
@@ -466,8 +468,9 @@ function summary(m){
   const vr={b:varB,a:sumA(varCats)}, biz={b:bizB,a:sumA(bizCats)};
   tax = {b:tax.b, a:tax.a + sumA(taxCats)};
   const bal = {
-    b: inc.b-(sav.b+fix.b+vr.b+biz.b+tax.b+sch.b),
-    a: inc.a-(sav.a+fix.a+vr.a+biz.a+tax.a+sch.a)
+    // nur privat: alef studio und Steuer laufen getrennt und zählen hier nicht mit
+    b: inc.b-(sav.b+fix.b+vr.b+sch.b),
+    a: inc.a-(sav.a+fix.a+vr.a+sch.a)
   };
   return {inc,sav,fix,vr,biz,tax,sch,bal,byCat,varCats,bizCats,es,hasDetail:!!app};
 }
@@ -552,7 +555,7 @@ function renderMonth(){
   const budget = s.vr.b;
   const rows = [
     ['Einkommen', s.inc], ['Sparen', s.sav], ['Fix Kosten', s.fix],
-    ['Variable Kosten', s.vr], ['alef studio', s.biz], ['Steuer (alef)', s.tax], ['Schulden', s.sch]
+    ['Variable Kosten', s.vr], ['Schulden', s.sch]
   ];
   const cell = (o,isOut) => {
     const over = isOut && o.a > o.b + 0.005 && o.b>0;
@@ -561,7 +564,7 @@ function renderMonth(){
   const app = D.months[month];
   let html = `<div class="period">${fmtD(startOf(month))} bis ${fmtD(endOf(month))}</div>
     <div class="hero">
-      <div class="lbl">Übrig diesen Monat</div>
+      <div class="lbl">Übrig diesen Monat (privat)</div>
       <div class="big num${s.bal.a<0?' neg':''}">${f(s.bal.a)}</div>
       <div class="sub">${f0(spent)} von ${f0(budget)} für Variable Kosten ausgegeben</div>
     </div>
@@ -569,6 +572,11 @@ function renderMonth(){
       <div class="grid3 head"><span>Bereich</span><span class="r">Budget</span><span class="r">Ist</span></div>
       ${rows.map(([n,o],k)=>`<div class="grid3"><span>${n}</span>${cell(o,k>0)}</div>`).join('')}
       <div class="grid3 total"><span>Balance</span><span class="r num">${f(s.bal.b)}</span><span class="r num">${f(s.bal.a)}</span></div>
+    </div>
+    <div class="sheet biz-sheet">
+      <div class="grid3 head"><span>alef studio (getrennt)</span><span class="r">Budget</span><span class="r">Ist</span></div>
+      <div class="grid3"><span>Ausgaben</span>${cell(s.biz,true)}</div>
+      <div class="grid3"><span>Steuer zurückgelegt</span>${cell(s.tax,false)}</div>
     </div>
     <div class="chart-card"><div class="t">Summary</div><div class="chart-box"><canvas id="cBar"></canvas></div></div>
     <div class="donuts">
@@ -618,7 +626,7 @@ let charts = [];
 function drawCharts(s){
   charts.forEach(c => c.destroy()); charts = [];
   const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim();
-  const out = o => s.sav[o]+s.fix[o]+s.vr[o]+s.biz[o]+s.tax[o]+s.sch[o];
+  const out = o => s.sav[o]+s.fix[o]+s.vr[o]+s.sch[o];
   const ring = (id, used, total, usedLbl, freeLbl) => {
     const free = total - used;
     $(id+'m').textContent = total>0 ? Math.round(used/total*100)+'%' : '-';
@@ -633,9 +641,9 @@ function drawCharts(s){
   ring('cD1', out('a'), s.inc.a, 'Ausgegeben', 'Übrig');
   ring('cD2', out('b'), s.inc.b, 'Verplant', 'Noch frei');
   if(!window.Chart) return;
-  const os = [s.inc, s.sav, s.fix, s.vr, s.biz, s.tax, s.sch];
+  const os = [s.inc, s.sav, s.fix, s.vr, s.sch];
   charts.push(new Chart($('cBar'), {type:'bar',
-    data:{labels:['Einkommen','Sparen','Fix','Variabel','alef','Steuer','Schulden'], datasets:[
+    data:{labels:['Einkommen','Sparen','Fix','Variabel','Schulden'], datasets:[
       {label:'Budget', data:os.map(o=>o.b), backgroundColor:v('--line'), borderRadius:5},
       {label:'Ist', data:os.map(o=>o.a), backgroundColor:v('--accent'), borderRadius:5}]},
     options:{responsive:true, maintainAspectRatio:false, animation:false,
