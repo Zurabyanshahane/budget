@@ -337,8 +337,8 @@ const emptyState = () => ({v:3, exp:[], cats:[], months:{}, T:{fixKosten:[],inco
   hist:{}, starts:{}, dayNotes:{}, debt:{name:'Ratenplan',total:0,plan:[],otherPaid:0}, cfgAt:0});
 let D = (() => { try { const x = JSON.parse(localStorage.getItem(LS)); if(x && x.v===3) return x; } catch(_){} return emptyState(); })();
 const VAR = ['Einkaufen Lebensmittel','Lunch','Essen draußen','Coffee','Other'];
-const NICE = {'Einkaufen Lebensmittel':'Lebensmittel','DM & Cosmetics':'Beauty / DM','Other':'Sonstiges','Steuerrücklage':'Steuer (alef)'};
-const SPECIAL = ['business','tax'];   // eigene Bereiche, nicht Variable Kosten
+const NICE = {'Einkaufen Lebensmittel':'Lebensmittel','DM & Cosmetics':'Beauty / DM','Other':'Sonstiges','Steuerrücklage':'Steuer (alef)','Umbuchung alef':'Privat → alef'};
+const SPECIAL = ['business','tax','bizincome','transfer'];   // eigene Bereiche (alef studio), nicht Variable Kosten
 const nice = c => NICE[c] || c;
 const MN = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
 const eur = new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'});
@@ -434,6 +434,8 @@ function summary(m){
   const shown = c => !hid(c) || byCat[c] || cb[c];
   const varCats = cats.filter(c => !SPECIAL.includes(grp(c)) && shown(c));
   const taxCats = cats.filter(c => grp(c)==='tax');
+  const incCats = cats.filter(c => grp(c)==='bizincome');
+  const trCats = cats.filter(c => grp(c)==='transfer');
   const bizCats = cats.filter(c => grp(c)==='business' && shown(c));
   const sumA = cs => cs.reduce((s,c)=>s+(byCat[c]||0),0);
   const sumB = cs => cs.reduce((s,c)=>s+bud(m,c),0);
@@ -470,9 +472,10 @@ function summary(m){
   const bal = {
     // nur privat: alef studio und Steuer laufen getrennt und zählen hier nicht mit
     b: inc.b-(sav.b+fix.b+vr.b+sch.b),
-    a: inc.a-(sav.a+fix.a+vr.a+sch.a)
+    a: inc.a-(sav.a+fix.a+vr.a+sch.a+sumA(trCats))
   };
-  return {inc,sav,fix,vr,biz,tax,sch,bal,byCat,varCats,bizCats,es,hasDetail:!!app};
+  const bizInc = {b:0, a:sumA(incCats)}, tr = {b:0, a:sumA(trCats)};
+  return {inc,sav,fix,vr,biz,tax,bizInc,tr,sch,bal,byCat,varCats,bizCats,es,hasDetail:!!app};
 }
 
 /* ---------- Eintragen ---------- */
@@ -487,6 +490,8 @@ function renderAmount(){
   $('save').textContent = refund ? 'Rückerstattung speichern' : 'Speichern';
   $('hint').textContent = !amt ? (refund ? 'Betrag der Rückerstattung tippen, dann Kategorie wählen' : 'Betrag tippen, dann Kategorie wählen')
     : !selCat ? 'Jetzt Kategorie wählen'
+    : grp(selCat)==='bizincome' ? 'Wird als Einnahme von alef studio gezählt'
+    : grp(selCat)==='transfer' ? (refund ? 'Geld von alef zu privat: kommt zu deinem Übrig dazu' : 'Geld von privat zu alef: geht von deinem Übrig ab')
     : grp(selCat)==='tax' ? (refund ? 'Wird aus der Steuerrücklage genommen' : 'Wird als Steuer zurückgelegt')
     : refund ? `Wird von ${nice(selCat)} abgezogen` : nice(selCat)+(entryDate===today?', heute':'');
 }
@@ -527,7 +532,8 @@ function save(){
   if(tooLate(entryDate)) return toast('Kommende Monate kann man noch nicht eintragen');
   const e = {id:uid(), u:Date.now(), date:entryDate, cat:selCat, amt:(refund ? -1 : 1) * Math.round(v*100)/100, note:$('note').value.trim()};
   D.exp.push(e); lastSaved = e;
-  toast(refund ? `+${f(-e.amt)} ${nice(e.cat)} erstattet` : `${f(e.amt)} ${nice(e.cat)} gespeichert`, () => { e.del = true; e.u = Date.now(); changed('exp'); });
+  toast(grp(e.cat)==='transfer' ? `${f(Math.abs(e.amt))} ${e.amt<0 ? 'alef → privat' : 'privat → alef'} gespeichert`
+    : refund ? `+${f(-e.amt)} ${nice(e.cat)} erstattet` : `${f(e.amt)} ${nice(e.cat)} gespeichert`, () => { e.del = true; e.u = Date.now(); changed('exp'); });
   $('amount').value=''; selCat=null; $('note').value=''; refund=false;
   changed('exp');
 }
@@ -542,9 +548,10 @@ function entryRow(e, withDel){
 function entryRowInner(e, withDel){
   const d = new Date(e.date+'T12:00').toLocaleDateString('de-DE',{day:'numeric',month:'short'});
   const dn = !e.note && withDel && D.dayNotes[e.date] ? '<div class="s">Tagesnotiz: '+esc(D.dayNotes[e.date])+'</div>' : '';
-  return `<div class="row"><div class="grow"><div class="t">${esc(nice(e.cat))}</div>
+  const label = grp(e.cat)==='transfer' && e.amt<0 ? 'alef → Privat' : nice(e.cat);
+  return `<div class="row"><div class="grow"><div class="t">${esc(label)}</div>
     <div class="s">${d}${e.note?' · '+esc(e.note):''}</div>${dn}</div>
-    <div class="v num${e.amt<0?' refund':''}">${e.amt<0 ? '+'+f(-e.amt) : f(e.amt)}</div><i class="ph ph-caret-right" style="color:var(--faint)"></i></div>`;
+    <div class="v num${e.amt<0 || grp(e.cat)==='bizincome' ?' refund':''}">${e.amt<0 ? '+'+f(-e.amt) : grp(e.cat)==='bizincome' ? '+'+f(e.amt) : f(e.amt)}</div><i class="ph ph-caret-right" style="color:var(--faint)"></i></div>`;
 }
 function renderLeftSmall(){
   ensureMonth(thisMonth);
@@ -564,7 +571,7 @@ function renderMonth(){
   const budget = s.vr.b;
   const rows = [
     ['Einkommen', s.inc], ['Sparen', s.sav], ['Fix Kosten', s.fix],
-    ['Variable Kosten', s.vr], ['Schulden', s.sch]
+    ['Variable Kosten', s.vr], ['Schulden', s.sch], ...(s.tr.a ? [['An alef überwiesen', s.tr]] : [])
   ];
   const cell = (o,isOut) => {
     const over = isOut && o.a > o.b + 0.005 && o.b>0;
@@ -584,8 +591,11 @@ function renderMonth(){
     </div>
     <div class="sheet biz-sheet">
       <div class="grid3 head"><span>alef studio (getrennt)</span><span class="r">Budget</span><span class="r">Ist</span></div>
+      <div class="grid3"><span>Einnahmen</span><span class="r"></span><span class="r num">${f(s.bizInc.a)}</span></div>
+      ${s.tr.a ? `<div class="grid3"><span>Von privat erhalten</span><span class="r"></span><span class="r num">${f(s.tr.a)}</span></div>` : ''}
       <div class="grid3"><span>Ausgaben</span>${cell(s.biz,true)}</div>
       <div class="grid3"><span>Steuer zurückgelegt</span>${cell(s.tax,false)}</div>
+      <div class="grid3 total"><span>Gewinn</span><span class="r"></span><span class="r num${s.bizInc.a - s.biz.a < 0 ? ' over' : ''}">${f(s.bizInc.a - s.biz.a)}</span></div>
     </div>
     <div class="chart-card"><div class="t">Summary</div><div class="chart-box"><canvas id="cBar"></canvas></div></div>
     <div class="donuts">
@@ -635,7 +645,7 @@ let charts = [];
 function drawCharts(s){
   charts.forEach(c => c.destroy()); charts = [];
   const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim();
-  const out = o => s.sav[o]+s.fix[o]+s.vr[o]+s.sch[o];
+  const out = o => s.sav[o]+s.fix[o]+s.vr[o]+s.sch[o]+(o==='a' ? s.tr.a : 0);
   const ring = (id, used, total, usedLbl, freeLbl) => {
     const free = total - used;
     $(id+'m').textContent = total>0 ? Math.round(used/total*100)+'%' : '-';
@@ -733,6 +743,7 @@ function renderYear(){
   const ms = allMonths().filter(m => m.startsWith(year));
   const all = exp.filter(e => e.m.startsWith(year));
   const es = all.filter(e => !SPECIAL.includes(grp(e.cat))), bz = all.filter(e => grp(e.cat)==='business');
+  const bizIn = all.filter(e => grp(e.cat)==='bizincome').reduce((s,e)=>s+e.amt,0);
   const byCat = {};
   es.forEach(e => byCat[e.cat] = (byCat[e.cat]||0) + e.amt);
   const total = es.reduce((s,e)=>s+e.amt,0), bizTotal = bz.reduce((s,e)=>s+e.amt,0);
@@ -751,7 +762,9 @@ function renderYear(){
     </div>
     <div class="hero biz-hero"><div class="lbl">alef studio ${year}</div>
       <div class="big num" style="font-size:28px">${f(bizTotal)}</div>
-      <div class="sub">Getrennt von deinen privaten Ausgaben, im Schnitt ${f(bizTotal/nMonths)} pro Monat</div>
+      <div class="sub">Ausgaben, getrennt von deinen privaten Ausgaben, im Schnitt ${f(bizTotal/nMonths)} pro Monat</div>
+      <div class="tax-line"><span>Einnahmen ${year}</span><b class="num">${f(bizIn)}</b></div>
+      <div class="tax-line"><span>Gewinn ${year}</span><b class="num">${f(bizIn - bizTotal)}</b></div>
       <div class="tax-line"><span>Steuer zurückgelegt ${year}</span><b class="num">${f(T.tax)}</b></div>
       <div class="tax-line"><span>Steuertopf insgesamt</span><b class="num">${f(taxPot())}</b></div></div>
     <div class="chart-card"><div class="t">${sel ? esc(nice(sel))+' pro Monat' : 'Ausgaben pro Monat'}</div>
@@ -937,7 +950,12 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
 });
 
 function ensureTaxCat(){
-  if(D.cats.length && !D.cats.some(c => c.group==='tax')){ D.cats.push({name:'Steuerrücklage', budget:0, group:'tax'}); D.cfgAt = Date.now(); persist(); }
+  if(!D.cats.length) return;
+  let add = false;
+  if(!D.cats.some(c => c.group==='tax')){ D.cats.push({name:'Steuerrücklage', budget:0, group:'tax'}); add = true; }
+  if(!D.cats.some(c => c.group==='bizincome')){ D.cats.push({name:'alef Einnahmen', budget:0, group:'bizincome'}); add = true; }
+  if(!D.cats.some(c => c.group==='transfer')){ D.cats.push({name:'Umbuchung alef', budget:0, group:'transfer'}); add = true; }
+  if(add){ D.cfgAt = Date.now(); persist(); }
 }
 function refreshAll(){ ensureTaxCat(); assignMonths(); renderCats(); renderAmount(); renderRecent(); renderLeftSmall(); renderMonth(); renderFix(); renderYear(); renderSettings(); }
 /* ---------- Speichern auf dem Gerät ---------- */
