@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Budget</title>
 <meta name="theme-color" content="#f2f2f0">
+<script>try{var t=localStorage.getItem('budget_theme');if(t==='light'||t==='dark'){document.documentElement.dataset.theme=t;document.querySelector('meta[name="theme-color"]').content=t==='dark'?'#111113':'#f2f2f0';}}catch(e){}</script>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
@@ -28,6 +29,18 @@
     --warn:#e2725d; --warn-soft:#3a1f1a;
   }
 }
+:root[data-theme="dark"]{
+    --bg:#111113; --surface:#1b1b1e; --surface2:#26262a; --line:#323237;
+    --text:#ececee; --muted:#a2a2aa; --faint:#6f6f77;
+    --accent:#3fb98f; --accent-soft:#16352b; --on-accent:#0d1f19;
+    --warn:#e2725d; --warn-soft:#3a1f1a;
+}
+html{color-scheme:light dark}
+:root[data-theme="light"]{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--surface2);border-radius:999px;padding:4px;margin:0 14px 14px}
+.seg button{height:36px;border-radius:999px;font-size:14px;font-weight:600;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:6px}
+.seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgb(0 0 0 / .12)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--text)}
 body{font:16px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
@@ -786,7 +799,7 @@ function setAmt(id, x, v){
   } else { x.amount = v; applyTpl(id); }
 }
 function renderSettings(){
-  $('setBody').innerHTML = syncBlock() + SETS.map(S => {
+  $('setBody').innerHTML = themeBlock() + syncBlock() + SETS.map(S => {
     const items = setItems(S.id), sum = items.reduce((s,x)=>s+amtOf(S.id,x),0);
     const rows = items.map(x => `<div class="row"><span class="grow t">${esc(isCat(S.id)?nice(x.name):x.name)}</span>
       <input class="amt-in num" data-set="${S.id}" data-n="${esc(x.name)}" inputmode="decimal" value="${fmtIn(amtOf(S.id,x))}" aria-label="Betrag ${esc(x.name)}">
@@ -1052,6 +1065,20 @@ const pickFile = isStart => { const i = document.createElement('input'); i.type 
   i.onchange = () => i.files[0] && loadFile(i.files[0], isStart); i.click(); };
 
 /* ---------- Einstellungen: Sync & Backup ---------- */
+function themeBlock(){
+  const cur = document.documentElement.dataset.theme || 'auto';
+  const b = (v, ic, t) => `<button data-theme-set="${v}" class="${cur===v?'on':''}"><i class="ph ${ic}"></i>${t}</button>`;
+  return `<div class="section open"><div class="sec-h" style="cursor:default"><span class="t">Darstellung</span></div>
+    <div class="seg" role="group" aria-label="Darstellung">${b('light','ph-sun','Hell')}${b('dark','ph-moon','Dunkel')}${b('auto','ph-circle-half','Auto')}</div></div>`;
+}
+function setTheme(v){
+  if(v === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v;
+  try { v === 'auto' ? localStorage.removeItem('budget_theme') : localStorage.setItem('budget_theme', v); } catch(_){}
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  refreshAll();
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if(!document.documentElement.dataset.theme) setTheme('auto'); });
 function syncBlock(){
   return `<div class="section open"><div class="sec-h" style="cursor:default"><span class="t">Konto &amp; Backup</span></div>
     <div class="sec-b">
@@ -1064,6 +1091,7 @@ function syncBlock(){
       <button class="btn2" id="bkUp"><i class="ph ph-upload-simple"></i> Backup laden</button></div></div></div>`;
 }
 document.addEventListener('click', e => {
+  const tb = e.target.closest('[data-theme-set]'); if(tb) return setTheme(tb.dataset.themeSet);
   const id = (e.target.closest('button')||{}).id;
   if(id === 'syncNow') sync();
   else if(id === 'pwNew') showLogin('reset');
