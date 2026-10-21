@@ -378,7 +378,7 @@ assignMonths();
 /* Monatsliste */
 function allMonths(){
   const s = new Set([...exp.map(e=>e.m), ...Object.keys(D.hist), ...Object.keys(D.months), thisMonth]);
-  return [...s].sort();
+  return [...s].filter(m => m <= thisMonth).sort();   // kommende Monate erst zeigen, wenn sie da sind
 }
 let month = thisMonth;
 
