@@ -335,7 +335,8 @@ const emptyState = () => ({v:3, exp:[], cats:[], months:{}, T:{fixKosten:[],inco
   hist:{}, starts:{}, dayNotes:{}, debt:{name:'Ratenplan',total:0,plan:[],otherPaid:0}, cfgAt:0});
 let D = (() => { try { const x = JSON.parse(localStorage.getItem(LS)); if(x && x.v===3) return x; } catch(_){} return emptyState(); })();
 const VAR = ['Einkaufen Lebensmittel','Lunch','Essen draußen','Coffee','Other'];
-const NICE = {'Einkaufen Lebensmittel':'Lebensmittel','DM & Cosmetics':'Beauty / DM','Other':'Sonstiges'};
+const NICE = {'Einkaufen Lebensmittel':'Lebensmittel','DM & Cosmetics':'Beauty / DM','Other':'Sonstiges','Steuerrücklage':'Steuer (alef)'};
+const SPECIAL = ['business','tax'];   // eigene Bereiche, nicht Variable Kosten
 const nice = c => NICE[c] || c;
 const MN = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
 const eur = new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'});
@@ -429,7 +430,8 @@ function summary(m){
   const cb = (app && app.catBudgets) || {};
   const cats = [...new Set([...D.cats.map(c=>c.name), ...Object.keys(byCat), ...Object.keys(cb).filter(c=>cb[c])])];
   const shown = c => !hid(c) || byCat[c] || cb[c];
-  const varCats = cats.filter(c => grp(c)!=='business' && shown(c));
+  const varCats = cats.filter(c => !SPECIAL.includes(grp(c)) && shown(c));
+  const taxCats = cats.filter(c => grp(c)==='tax');
   const bizCats = cats.filter(c => grp(c)==='business' && shown(c));
   const sumA = cs => cs.reduce((s,c)=>s+(byCat[c]||0),0);
   const sumB = cs => cs.reduce((s,c)=>s+bud(m,c),0);
@@ -462,6 +464,7 @@ function summary(m){
     varB=sumB(varCats);
   }
   const vr={b:varB,a:sumA(varCats)}, biz={b:bizB,a:sumA(bizCats)};
+  tax = {b:tax.b, a:tax.a + sumA(taxCats)};
   const bal = {
     b: inc.b-(sav.b+fix.b+vr.b+biz.b+tax.b+sch.b),
     a: inc.a-(sav.a+fix.a+vr.a+biz.a+tax.a+sch.a)
@@ -481,11 +484,12 @@ function renderAmount(){
   $('save').textContent = refund ? 'Rückerstattung speichern' : 'Speichern';
   $('hint').textContent = !amt ? (refund ? 'Betrag der Rückerstattung tippen, dann Kategorie wählen' : 'Betrag tippen, dann Kategorie wählen')
     : !selCat ? 'Jetzt Kategorie wählen'
+    : grp(selCat)==='tax' ? (refund ? 'Wird aus der Steuerrücklage genommen' : 'Wird als Steuer zurückgelegt')
     : refund ? `Wird von ${nice(selCat)} abgezogen` : nice(selCat)+(entryDate===today?', heute':'');
 }
 function renderCats(){
   $('cats').innerHTML = catOrder().map(c =>
-    `<button class="cat${c===selCat?' on':''}${grp(c)==='business'?' biz':''}" data-c="${esc(c)}">${esc(nice(c))}</button>`).join('');
+    `<button class="cat${c===selCat?' on':''}${SPECIAL.includes(grp(c))?' biz':''}" data-c="${esc(c)}">${esc(nice(c))}</button>`).join('');
 }
 $('cats').onclick = e => {
   const b = e.target.closest('.cat'); if(!b) return;
@@ -592,7 +596,12 @@ function itemSection(title, key, tot){
   return `<div class="section${openSecs.has(title)||planMode?' open':''}" data-sec="${title}">
     <button class="sec-h"><span class="t">${title}</span>
       <span><span class="s num">${f(tot.a)} / ${f(tot.b)}</span><i class="ph ph-caret-down"></i></span></button>
-    <div class="sec-b">${body}${key==='income' ? rollNote() : ''}</div></div>`;
+    <div class="sec-b">${body}${key==='income' ? rollNote() : ''}${key==='steuer' ? taxNote() : ''}</div></div>`;
+}
+/* Hinweis im Steuer-Bereich: was über „Eintragen“ zurückgelegt wurde */
+function taxNote(){
+  const v = exp.filter(e => e.m===month && grp(e.cat)==='tax').reduce((s,e)=>s+e.amt,0);
+  return `<div class="roll-note"><i class="ph ph-piggy-bank"></i> Über „Eintragen“ zurückgelegt: <b class="num">${f(v)}</b></div>`;
 }
 /* Hinweis unter dem Einkommen: Rollover automatisch oder von Hand */
 function rollNote(){
@@ -697,7 +706,8 @@ $('fPrev').onclick = () => step(-1); $('fNext').onclick = () => step(1);
 /* ---------- Jahr ---------- */
 let year = month.slice(0,4), yearCat = null, yChart = null;
 /* Alles, was bisher für die Steuer zurückgelegt wurde (Ist, bis heute) */
-const taxPot = () => Object.entries(D.months).filter(([m]) => m <= thisMonth).reduce((s,[,md]) => s + (md.steuer||[]).reduce((t,x)=>t+(+x.actual||0),0), 0);
+const taxPot = () => Object.entries(D.months).filter(([m]) => m <= thisMonth).reduce((s,[,md]) => s + (md.steuer||[]).reduce((t,x)=>t+(+x.actual||0),0), 0)
+  + exp.filter(e => grp(e.cat)==='tax' && e.m <= thisMonth).reduce((s,e) => s + e.amt, 0);
 const years = () => [...new Set(allMonths().map(m=>m.slice(0,4)))];
 function renderYear(){
   const ys = years(), i = ys.indexOf(year);
@@ -705,7 +715,7 @@ function renderYear(){
   $('yPrev').disabled = i<=0; $('yNext').disabled = i>=ys.length-1;
   const ms = allMonths().filter(m => m.startsWith(year));
   const all = exp.filter(e => e.m.startsWith(year));
-  const es = all.filter(e => grp(e.cat)!=='business'), bz = all.filter(e => grp(e.cat)==='business');
+  const es = all.filter(e => !SPECIAL.includes(grp(e.cat))), bz = all.filter(e => grp(e.cat)==='business');
   const byCat = {};
   es.forEach(e => byCat[e.cat] = (byCat[e.cat]||0) + e.amt);
   const total = es.reduce((s,e)=>s+e.amt,0), bizTotal = bz.reduce((s,e)=>s+e.amt,0);
@@ -909,7 +919,10 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   window.scrollTo(0,0);
 });
 
-function refreshAll(){ assignMonths(); renderCats(); renderAmount(); renderRecent(); renderLeftSmall(); renderMonth(); renderFix(); renderYear(); renderSettings(); }
+function ensureTaxCat(){
+  if(D.cats.length && !D.cats.some(c => c.group==='tax')){ D.cats.push({name:'Steuerrücklage', budget:0, group:'tax'}); D.cfgAt = Date.now(); persist(); }
+}
+function refreshAll(){ ensureTaxCat(); assignMonths(); renderCats(); renderAmount(); renderRecent(); renderLeftSmall(); renderMonth(); renderFix(); renderYear(); renderSettings(); }
 /* ---------- Speichern auf dem Gerät ---------- */
 const clean = () => JSON.parse(JSON.stringify(D, (k,v) => k==='m' ? undefined : v));
 function persist(){
