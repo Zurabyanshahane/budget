@@ -94,6 +94,7 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;paddin
 .pill input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;border:0;cursor:pointer;-webkit-appearance:none;appearance:none}
 .left-small{font-size:13px;color:var(--muted)}
 .left-small b{color:var(--text)}
+.left-small.over,.left-small.over b{color:var(--warn);font-weight:600}
 .amount-wrap{display:flex;justify-content:center;align-items:baseline;gap:6px;margin:10px 0 2px}
 .amount{width:4.5ch;border:0;border-bottom:2px solid var(--line);background:none;color:var(--text);text-align:center;
   font-family:inherit;font-size:48px;font-weight:650;line-height:1.15;letter-spacing:-1px;padding:0 0 2px;outline:none}
@@ -557,7 +558,10 @@ function renderLeftSmall(){
   ensureMonth(thisMonth);
   const s = summary(thisMonth);
   const left = s.vr.b - s.vr.a;
-  $('leftSmall').innerHTML = `Noch <b class="num">${f0(left)}</b> im ${MN[+thisMonth.slice(5)-1]}`;
+  $('leftSmall').classList.toggle('over', left < -0.005);
+  $('leftSmall').innerHTML = left < -0.005
+    ? `<b class="num">${f0(-left)}</b> über Budget`
+    : `Noch <b class="num">${f0(left)}</b> für Variable Kosten`;
 }
 
 /* ---------- Monat ---------- */
