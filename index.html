@@ -504,18 +504,27 @@ $('amount').onkeydown = e => { if(e.key==='Enter') save(); };
 $('save').onclick = save;
 $('refundTog').onclick = () => { refund = !refund; renderAmount(); };
 function setDateLbl(){
+  $('dateIn').max = maxDate();
   const d = new Date(entryDate+'T12:00');
   const y = iso(new Date(Date.now()-864e5));
   $('dateLbl').textContent = entryDate===today ? 'Heute' : entryDate===y ? 'Gestern'
     : d.toLocaleDateString('de-DE',{weekday:'short',day:'numeric',month:'short'});
 }
 $('dateIn').value = today;
-$('dateIn').onchange = $('dateIn').oninput = e => { entryDate = e.target.value || today; setDateLbl(); renderAmount(); };
+/* Kommende Monate sind gesperrt: spätestens bis zum letzten Tag dieses Monats */
+const maxDate = () => endOf(monthOf(today));
+const tooLate = d => d > maxDate();
+$('dateIn').onchange = $('dateIn').oninput = e => {
+  let v = e.target.value || today;
+  if(tooLate(v)){ toast('Kommende Monate kann man noch nicht eintragen'); v = today; e.target.value = today; }
+  entryDate = v; setDateLbl(); renderAmount();
+};
 $('dateIn').onclick = () => { try{ $('dateIn').showPicker(); }catch(_){} };
 
 let lastSaved = null;
 function save(){
   const v = amtNum(); if(!(v>0 && selCat)) return;
+  if(tooLate(entryDate)) return toast('Kommende Monate kann man noch nicht eintragen');
   const e = {id:uid(), u:Date.now(), date:entryDate, cat:selCat, amt:(refund ? -1 : 1) * Math.round(v*100)/100, note:$('note').value.trim()};
   D.exp.push(e); lastSaved = e;
   toast(refund ? `+${f(-e.amt)} ${nice(e.cat)} erstattet` : `${f(e.amt)} ${nice(e.cat)} gespeichert`, () => { e.del = true; e.u = Date.now(); changed('exp'); });
@@ -1067,7 +1076,7 @@ function openEdit(id){
     <div class="addbox" style="margin-top:0">
       <label>Betrag<input id="edAmt" inputmode="decimal" value="${fmtIn(Math.abs(e.amt))}"></label>
       <label class="chkrow"><input type="checkbox" id="edRefund"${e.amt<0?' checked':''}> Rückerstattung (wird von der Kategorie abgezogen)</label>
-      <label>Datum<input id="edDate" type="date" value="${e.date}"></label>
+      <label>Datum<input id="edDate" type="date" value="${e.date}" max="${maxDate()}"></label>
       <label>Kategorie<select id="edCat">${cats.map(c => `<option value="${esc(c)}"${c===e.cat?' selected':''}>${esc(nice(c))}</option>`).join('')}</select></label>
       <label>Notiz<input id="edNote" value="${esc(e.note||'')}" autocomplete="off"></label>
       <button class="btn" id="edSave">Speichern</button>
@@ -1081,6 +1090,7 @@ function saveEdit(){
   const v = parseAmt($('edAmt').value), date = $('edDate').value;
   if(!(v > 0)) return toast('Bitte einen Betrag eingeben');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Bitte ein Datum wählen');
+  if(tooLate(date)) return toast('Kommende Monate kann man noch nicht eintragen');
   if(date !== e.date) delete e.xm;   // neues Datum: Monat neu bestimmen
   Object.assign(e, {amt:($('edRefund').checked ? -1 : 1) * Math.round(v*100)/100, date, cat:$('edCat').value, note:$('edNote').value.trim(), u:Date.now()});
   closeSheet(); changed('exp'); toast('Eintrag gespeichert');
