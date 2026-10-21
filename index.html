@@ -11,6 +11,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <style>
 /* Radius-Regel: Karten 16px, Chips/Buttons/Tabs Pill, Tasten 14px */
 :root{
@@ -43,6 +44,19 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;paddin
 .row.tap:active{background:var(--surface2)}
 .btn2{height:40px;border-radius:999px;background:var(--surface2);color:var(--text);font-weight:600;padding:0 14px}
 .btnrow{display:flex;gap:8px;flex-wrap:wrap;padding:12px 14px}
+.login{position:fixed;inset:0;z-index:60;background:var(--bg);display:grid;place-items:center;padding:24px 16px calc(24px + env(safe-area-inset-bottom))}
+.login[hidden]{display:none}
+.login-card{width:100%;max-width:380px;display:grid;gap:12px}
+.login-card h1{margin:0 0 6px;font-size:26px;text-align:center}
+.login-icon{width:64px;height:64px;border-radius:18px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-size:34px;margin:0 auto 4px}
+.login-card label{display:grid;gap:6px;font-size:13px;color:var(--muted);font-weight:500}
+.login-card label[hidden]{display:none}
+.login-card input{border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:12px;padding:12px;font:inherit;font-size:16px;outline:none}
+.login-card input:focus{border-color:var(--accent)}
+.login-info{min-height:18px;font-size:14px;color:var(--muted);text-align:center}
+.login-card .btn,.login-card .btn2{height:48px}
+.link{color:var(--accent);font-size:14px;padding:6px}
+.link[hidden],.btn2[hidden]{display:none}
 .keybox{font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all;color:var(--muted);padding:0 14px 4px}
 .screen{display:none}
 .screen.on{display:block;animation:fade .22s ease-out}
@@ -274,6 +288,18 @@ h3{font-size:13px;font-weight:600;color:var(--muted);margin:26px 4px 8px}
   <button class="tab" data-s="s-set"><i class="ph ph-gear-six"></i>Einstellungen</button>
 </div></nav>
 
+<div class="login" id="login" hidden>
+  <div class="login-card">
+    <div class="login-icon"><i class="ph-bold ph-currency-eur"></i></div>
+    <h1 id="lgTitle">Budget</h1>
+    <label id="lgEmailRow">E-Mail<input id="lgEmail" type="email" autocomplete="username" inputmode="email" autocapitalize="off"></label>
+    <label>Passwort<input id="lgPw" type="password" autocomplete="current-password"></label>
+    <div class="login-info" id="lgInfo" role="status"></div>
+    <button class="btn" id="lgMain">Anmelden</button>
+    <button class="btn2" id="lgAlt">Konto erstellen</button>
+    <button class="link" id="lgForgot">Passwort vergessen?</button>
+  </div>
+</div>
 <div class="scrim" id="scrim"></div>
 <div class="bsheet" id="bsheet"><div class="grab"></div><div id="bsBody"></div></div>
 <div class="toast" id="toast"><span id="toastTxt"></span><button id="toastUndo">Rückgängig</button></div>
@@ -855,14 +881,12 @@ function changed(kind){
   clearTimeout(pushTimer); pushTimer = setTimeout(sync, 1500);
 }
 
-/* ---------- Sync über Supabase ---------- */
-let syncKey = (() => { try { return localStorage.getItem(SYNC_LS) || ''; } catch(_) { return ''; } })();
-if(location.hash.startsWith('#k=')){
-  syncKey = decodeURIComponent(location.hash.slice(3));
-  try { localStorage.setItem(SYNC_LS, syncKey); } catch(_){}
-  history.replaceState(null, '', location.pathname);
-}
-const syncOn = () => !!(syncKey && SB_URL.startsWith('https://'));
+/* ---------- Konto & Sync über Supabase (Login mit E-Mail und Passwort) ---------- */
+const sb = (window.supabase && SB_URL.startsWith('https://'))
+  ? supabase.createClient(SB_URL, SB_KEY, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, storageKey:'budget_auth'}})
+  : null;
+let user = null;
+const syncOn = () => !!(sb && user);
 let syncStatus = '', lastSync = 0, syncing = false, again = false;
 function setSync(st){
   syncStatus = st;
@@ -872,12 +896,6 @@ function setSync(st){
   $('syncNote').innerHTML = `<i class="ph ${ic}"></i>${t}`;
   $('syncNote').classList.toggle('err', st==='err');
   if($('syncState')) $('syncState').textContent = t;
-}
-async function rpc(fn, body){
-  const r = await fetch(SB_URL + '/rest/v1/rpc/' + fn, {method:'POST',
-    headers:{'apikey':SB_KEY, 'Authorization':'Bearer '+SB_KEY, 'Content-Type':'application/json'}, body:JSON.stringify(body)});
-  if(!r.ok) throw new Error(r.status + ' ' + await r.text());
-  return r.json();
 }
 const CFG = ['cats','months','T','hist','starts','dayNotes','debt'];
 /* Zusammenführen: Einträge einzeln (neuester Stand gewinnt), Planung/Einstellungen als Ganzes */
@@ -894,13 +912,17 @@ async function sync(){
   if(syncing){ again = true; return; }
   syncing = true; setSync('run');
   try {
-    const res = await rpc('budget_get', {p_key:syncKey});
-    const remote = res && res.data;
+    const {data:row, error} = await sb.from('budget_data').select('data').maybeSingle();
+    if(error) throw error;
+    const remote = row && row.data;
     if(remote && merge(remote)){ persist(); refreshAll(); }
     const rmap = new Map(((remote && remote.exp) || []).map(x => [x.id, x]));
     const localNewer = !remote || (D.cfgAt||0) > (remote.cfgAt||0) ||
       D.exp.some(e => { const x = rmap.get(e.id); return !x || (e.u||0) > (x.u||0); });
-    if(localNewer) await rpc('budget_put', {p_key:syncKey, p_data:clean()});
+    if(localNewer && (D.exp.length || D.cats.length)){
+      const {error:e2} = await sb.from('budget_data').upsert({user_id:user.id, data:clean(), updated_at:new Date().toISOString()});
+      if(e2) throw e2;
+    }
     lastSync = Date.now(); setSync('ok');
   } catch(err) { console.warn(err); setSync(navigator.onLine === false ? 'off' : 'err'); }
   syncing = false;
@@ -909,9 +931,69 @@ async function sync(){
 document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') sync(); });
 window.addEventListener('online', sync);
 setInterval(() => { if(document.visibilityState === 'visible') sync(); }, 60000);
-const newKey = () => { const b = new Uint8Array(24); crypto.getRandomValues(b); return btoa(String.fromCharCode(...b)).replace(/[+/=]/g, c => ({'+':'-','/':'_','=':''}[c])); };
-const phoneLink = () => location.origin + location.pathname + '#k=' + encodeURIComponent(syncKey);
-function setKey(k){ syncKey = k; try { k ? localStorage.setItem(SYNC_LS, k) : localStorage.removeItem(SYNC_LS); } catch(_){} renderSettings(); sync(); }
+
+/* ---------- Anmelden ---------- */
+const appUrl = () => location.origin + location.pathname;
+const authMsg = m => ({'Invalid login credentials':'E-Mail oder Passwort ist falsch.',
+  'Email not confirmed':'Bitte zuerst den Link in der Bestätigungs-E-Mail antippen.',
+  'User already registered':'Für diese E-Mail gibt es schon ein Konto. Bitte anmelden.'}[m] || m);
+function showLogin(mode){
+  const L = $('login'); L.hidden = false; L.dataset.mode = mode;
+  $('lgTitle').textContent = mode === 'reset' ? 'Neues Passwort' : 'Budget';
+  $('lgEmailRow').hidden = mode === 'reset';
+  $('lgMain').textContent = mode === 'reset' ? 'Passwort speichern' : 'Anmelden';
+  $('lgAlt').hidden = $('lgForgot').hidden = mode === 'reset';
+  $('lgPw').autocomplete = mode === 'reset' ? 'new-password' : 'current-password';
+  $('lgPw').value = ''; $('lgInfo').textContent = mode === 'reset' ? 'Wähle ein neues Passwort (mindestens 8 Zeichen).' : '';
+}
+const hideLogin = () => { $('login').hidden = true; };
+async function lgSubmit(kind){
+  const email = $('lgEmail').value.trim(), pw = $('lgPw').value, mode = $('login').dataset.mode;
+  const info = t => { $('lgInfo').textContent = t; };
+  try {
+    if(mode === 'reset'){
+      if(pw.length < 8) return info('Bitte mindestens 8 Zeichen.');
+      const {error} = await sb.auth.updateUser({password:pw}); if(error) throw error;
+      hideLogin(); toast('Neues Passwort gespeichert'); return;
+    }
+    if(!/^\S+@\S+\.\S+$/.test(email)) return info('Bitte eine gültige E-Mail eingeben.');
+    if(kind === 'forgot'){
+      const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo:appUrl()}); if(error) throw error;
+      return info('Wir haben dir eine E-Mail zum Zurücksetzen geschickt.');
+    }
+    if(pw.length < 8) return info('Das Passwort braucht mindestens 8 Zeichen.');
+    if(kind === 'signup'){
+      const {data, error} = await sb.auth.signUp({email, password:pw, options:{emailRedirectTo:appUrl()}}); if(error) throw error;
+      if(!data.session) return info('Fast geschafft: Bitte den Link in der E-Mail antippen, dann hier anmelden.');
+    } else {
+      const {error} = await sb.auth.signInWithPassword({email, password:pw}); if(error) throw error;
+    }
+  } catch(err) { info(authMsg(err.message || String(err))); }
+}
+async function afterLogin(){
+  hideLogin();
+  if(D.owner && D.owner !== user.id){ D = emptyState(); }   // anderes Konto: fremde Daten nicht übernehmen
+  D.owner = user.id; persist(); refreshAll();
+  await sync();
+  if(!D.exp.length && !D.cats.length) welcome();
+}
+async function logout(){
+  if(!confirm('Abmelden? Deine Daten werden von diesem Gerät entfernt und bleiben in deinem Konto.')) return;
+  await sync();
+  await sb.auth.signOut();
+  try { localStorage.removeItem(LS); } catch(_){}
+  user = null; D = emptyState(); refreshAll(); showLogin('login');
+}
+function initAuth(){
+  if(!sb){ setSync('local'); if(!D.exp.length && !D.cats.length) welcome(); return; }
+  showLogin('login');
+  sb.auth.onAuthStateChange((ev, session) => {
+    if(ev === 'PASSWORD_RECOVERY'){ user = session && session.user; showLogin('reset'); return; }
+    const u = session ? session.user : null;
+    if(u && (!user || u.id !== user.id)){ user = u; setTimeout(afterLogin, 0); }
+    else if(!u){ user = null; showLogin('login'); }
+  });
+}
 
 /* ---------- Eintrag bearbeiten ---------- */
 function openEdit(id){
@@ -960,7 +1042,8 @@ function loadFile(file, isStart){
     if(!isStart && !confirm(`Backup mit ${x.exp.filter(e=>!e.del).length} Einträgen laden? Der jetzige Stand auf diesem Gerät wird ersetzt.`)) return;
     D = x; D.cfgAt = Date.now(); D.exp.forEach(e => { if(isStart) e.u = e.u || 0; });
     month = thisMonth; persist(); closeSheet(); refreshAll();
-    if(isStart && !syncKey && SB_URL.startsWith('https://')) setKey(newKey()); else sync();
+    if(user) D.owner = user.id;
+    persist(); sync();
     toast(isStart ? 'Daten geladen' : 'Backup geladen');
   };
   rd.readAsText(file);
@@ -970,49 +1053,40 @@ const pickFile = isStart => { const i = document.createElement('input'); i.type 
 
 /* ---------- Einstellungen: Sync & Backup ---------- */
 function syncBlock(){
-  const masked = syncKey ? syncKey.slice(0,4) + ' … ' + syncKey.slice(-4) : '';
-  return `<div class="section open"><div class="sec-h" style="cursor:default"><span class="t">Sync &amp; Backup</span></div>
-    <div class="sec-b"><div class="row"><span class="grow"><span class="t">Status</span><div class="s" id="syncState"></div></span></div>
-    ${syncKey ? `<div class="row"><span class="grow"><span class="t">Sync-Schlüssel</span><div class="s num">${masked}</div></span></div>
-      <div class="btnrow"><button class="btn2" id="copyLink"><i class="ph ph-link"></i> Handy-Link kopieren</button>
-        <button class="btn2" id="syncNow"><i class="ph ph-arrows-clockwise"></i> Jetzt synchronisieren</button>
-        <button class="btn2" id="unlink">Trennen</button></div>
-      <div class="note-box" style="padding:0 14px 12px">Den Handy-Link nur an dich selbst schicken. Wer ihn hat, sieht deine Daten.</div>`
-    : `<div class="addrow" style="grid-template-columns:1fr auto"><input id="keyIn" placeholder="Sync-Schlüssel einfügen" autocomplete="off" aria-label="Sync-Schlüssel">
-        <button class="btn2" id="keyGo">Verbinden</button></div>
-      ${SB_URL.startsWith('https://') ? '<div class="btnrow"><button class="btn2" id="keyNew">Neuen Schlüssel erstellen</button></div>' : ''}`}
+  return `<div class="section open"><div class="sec-h" style="cursor:default"><span class="t">Konto &amp; Backup</span></div>
+    <div class="sec-b">
+    ${user ? `<div class="row"><span class="grow"><span class="t">Angemeldet</span><div class="s">${esc(user.email||'')}</div></span></div>` : ''}
+    <div class="row"><span class="grow"><span class="t">Status</span><div class="s" id="syncState"></div></span></div>
+    ${user ? `<div class="btnrow"><button class="btn2" id="syncNow"><i class="ph ph-arrows-clockwise"></i> Jetzt synchronisieren</button>
+      <button class="btn2" id="pwNew"><i class="ph ph-key"></i> Passwort ändern</button>
+      <button class="btn2" id="logout"><i class="ph ph-sign-out"></i> Abmelden</button></div>` : ''}
     <div class="btnrow" style="border-top:1px solid var(--line)"><button class="btn2" id="bkDown"><i class="ph ph-download-simple"></i> Backup herunterladen</button>
       <button class="btn2" id="bkUp"><i class="ph ph-upload-simple"></i> Backup laden</button></div></div></div>`;
 }
 document.addEventListener('click', e => {
   const id = (e.target.closest('button')||{}).id;
-  if(id === 'copyLink'){ navigator.clipboard.writeText(phoneLink()).then(() => toast('Link kopiert. Auf dem Handy in Safari öffnen.'), () => prompt('Link kopieren:', phoneLink())); }
-  else if(id === 'syncNow') sync();
-  else if(id === 'unlink'){ if(confirm('Sync auf diesem Gerät trennen? Deine Daten bleiben auf dem Gerät.')) setKey(''); }
-  else if(id === 'keyGo'){ const k = $('keyIn').value.trim().replace(/^.*#k=/, ''); if(k.length < 24) return toast('Der Schlüssel ist zu kurz'); setKey(decodeURIComponent(k)); }
-  else if(id === 'keyNew') setKey(newKey());
+  if(id === 'syncNow') sync();
+  else if(id === 'pwNew') showLogin('reset');
+  else if(id === 'logout') logout();
   else if(id === 'bkDown') downloadBackup();
   else if(id === 'bkUp') pickFile(false);
   else if(id === 'startFile') pickFile(true);
-  else if(id === 'startKey'){ const k = $('startKeyIn').value.trim().replace(/^.*#k=/, ''); if(k.length < 24) return toast('Der Schlüssel ist zu kurz'); closeSheet(); setKey(decodeURIComponent(k)); }
+  else if(id === 'lgMain') lgSubmit('login');
+  else if(id === 'lgAlt') lgSubmit('signup');
+  else if(id === 'lgForgot') lgSubmit('forgot');
 });
+$('lgPw').addEventListener('keydown', e => { if(e.key === 'Enter') lgSubmit('login'); });
 
 /* ---------- Erster Start ---------- */
 function welcome(){
   $('bsBody').innerHTML = `<h2>Willkommen</h2>
-    <div class="note-box" style="padding:0 4px 12px">Noch keine Daten auf diesem Gerät. Wie möchtest du starten?</div>
-    <div class="addbox" style="margin-top:0">
-      <button class="btn" id="startFile"><i class="ph ph-file-arrow-up"></i> Startdatei oder Backup laden</button>
-      <label>Oder mit Sync-Schlüssel verbinden<input id="startKeyIn" placeholder="Schlüssel oder Handy-Link" autocomplete="off"></label>
-      <button class="btn2" id="startKey">Verbinden</button>
-    </div>`;
+    <div class="note-box" style="padding:0 4px 12px">In deinem Konto sind noch keine Daten. Lade einmal deine Startdatei (Budget-Startdaten.json) oder ein Backup. Danach ist alles auf all deinen Geräten.</div>
+    <div class="addbox" style="margin-top:0"><button class="btn" id="startFile"><i class="ph ph-file-arrow-up"></i> Startdatei oder Backup laden</button></div>`;
   openSheet();
 }
 
 if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
-
-setDateLbl(); refreshAll(); setSync(syncOn() ? 'run' : 'local');
-if(!D.exp.length && !D.cats.length && !syncOn()) welcome(); else sync();
+setDateLbl(); refreshAll(); setSync('local'); initAuth();
 </script>
 </body>
 </html>
