@@ -99,6 +99,13 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;paddin
 .amount:focus{border-bottom-color:var(--accent)}
 .amount::placeholder{color:var(--faint)}
 .amount-wrap span{font-size:28px;font-weight:600;color:var(--muted)}
+.refund-row{display:flex;justify-content:center;margin-top:8px}
+.refund-tog{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--muted);background:var(--surface2);border-radius:999px;padding:6px 12px}
+.refund-tog.on{background:var(--accent-soft);color:var(--accent)}
+.amount.neg{color:var(--accent)}
+.v.refund{color:var(--accent)}
+.addbox .chkrow{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--text)}
+.addbox .chkrow input{width:20px;height:20px;accent-color:var(--accent)}
 .hint{text-align:center;font-size:13px;color:var(--muted);min-height:18px;margin:8px 0 14px}
 .cats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:10px}
 .cat{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:9px 6px;font-size:13.5px;
@@ -230,7 +237,7 @@ h3{font-size:13px;font-weight:600;color:var(--muted);margin:26px 4px 8px}
 .del{color:var(--warn);font-size:20px;padding:4px}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translate(-50%,20px);opacity:0;
   background:var(--text);color:var(--bg);border-radius:999px;padding:10px 10px 10px 18px;font-size:14px;display:flex;gap:12px;align-items:center;
-  transition:opacity .2s,transform .2s;z-index:40;white-space:nowrap;pointer-events:none}
+  transition:opacity .2s,transform .2s;z-index:40;pointer-events:none;max-width:calc(100% - 32px);width:max-content}
 .toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 .toast button{background:color-mix(in srgb,var(--bg) 18%,transparent);color:var(--bg);border-radius:999px;padding:5px 12px;font-weight:600;font-size:13px}
 </style>
@@ -247,6 +254,7 @@ h3{font-size:13px;font-weight:600;color:var(--muted);margin:26px 4px 8px}
       <div class="left-small" id="leftSmall"></div>
     </div>
     <label class="amount-wrap"><input class="amount num" id="amount" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Betrag"><span>€</span></label>
+    <div class="refund-row"><button class="refund-tog" id="refundTog" aria-pressed="false"><i class="ph ph-arrow-u-up-left"></i> Rückerstattung</button></div>
     <div class="hint" id="hint">Betrag tippen, dann Kategorie wählen</div>
     <div class="cats" id="cats"></div>
     <input class="note" id="note" placeholder="Notiz (optional)" autocomplete="off">
@@ -459,14 +467,18 @@ function summary(m){
 }
 
 /* ---------- Eintragen ---------- */
-let selCat = null, entryDate = today;
+let selCat = null, entryDate = today, refund = false;
 function amtNum(){ return parseFloat($('amount').value.replace(/\./g,'').replace(',','.'))||0; }
 function renderAmount(){
   const amt = $('amount').value.trim();
   $('amount').style.width = Math.min(9, Math.max(2.5, amt.length + 0.6)) + 'ch';
   $('save').disabled = !(amtNum()>0 && selCat);
-  $('hint').textContent = !amt ? 'Betrag tippen, dann Kategorie wählen'
-    : !selCat ? 'Jetzt Kategorie wählen' : nice(selCat)+(entryDate===today?', heute':'');
+  $('refundTog').classList.toggle('on', refund); $('refundTog').setAttribute('aria-pressed', refund);
+  $('amount').classList.toggle('neg', refund);
+  $('save').textContent = refund ? 'Rückerstattung speichern' : 'Speichern';
+  $('hint').textContent = !amt ? (refund ? 'Betrag der Rückerstattung tippen, dann Kategorie wählen' : 'Betrag tippen, dann Kategorie wählen')
+    : !selCat ? 'Jetzt Kategorie wählen'
+    : refund ? `Wird von ${nice(selCat)} abgezogen` : nice(selCat)+(entryDate===today?', heute':'');
 }
 function renderCats(){
   $('cats').innerHTML = catOrder().map(c =>
@@ -480,6 +492,7 @@ $('cats').onclick = e => {
 $('amount').oninput = renderAmount;
 $('amount').onkeydown = e => { if(e.key==='Enter') save(); };
 $('save').onclick = save;
+$('refundTog').onclick = () => { refund = !refund; renderAmount(); };
 function setDateLbl(){
   const d = new Date(entryDate+'T12:00');
   const y = iso(new Date(Date.now()-864e5));
@@ -493,10 +506,10 @@ $('dateIn').closest('label').onclick = () => { try{ $('dateIn').showPicker(); }c
 let lastSaved = null;
 function save(){
   const v = amtNum(); if(!(v>0 && selCat)) return;
-  const e = {id:uid(), u:Date.now(), date:entryDate, cat:selCat, amt:Math.round(v*100)/100, note:$('note').value.trim()};
+  const e = {id:uid(), u:Date.now(), date:entryDate, cat:selCat, amt:(refund ? -1 : 1) * Math.round(v*100)/100, note:$('note').value.trim()};
   D.exp.push(e); lastSaved = e;
-  toast(`${f(e.amt)} ${nice(e.cat)} gespeichert`, () => { e.del = true; e.u = Date.now(); changed('exp'); });
-  $('amount').value=''; selCat=null; $('note').value='';
+  toast(refund ? `+${f(-e.amt)} ${nice(e.cat)} erstattet` : `${f(e.amt)} ${nice(e.cat)} gespeichert`, () => { e.del = true; e.u = Date.now(); changed('exp'); });
+  $('amount').value=''; selCat=null; $('note').value=''; refund=false;
   changed('exp');
 }
 function renderRecent(){
@@ -512,7 +525,7 @@ function entryRowInner(e, withDel){
   const dn = !e.note && withDel && D.dayNotes[e.date] ? '<div class="s">Tagesnotiz: '+esc(D.dayNotes[e.date])+'</div>' : '';
   return `<div class="row"><div class="grow"><div class="t">${esc(nice(e.cat))}</div>
     <div class="s">${d}${e.note?' · '+esc(e.note):''}</div>${dn}</div>
-    <div class="v num">${f(e.amt)}</div><i class="ph ph-caret-right" style="color:var(--faint)"></i></div>`;
+    <div class="v num${e.amt<0?' refund':''}">${e.amt<0 ? '+'+f(-e.amt) : f(e.amt)}</div><i class="ph ph-caret-right" style="color:var(--faint)"></i></div>`;
 }
 function renderLeftSmall(){
   ensureMonth(thisMonth);
@@ -617,7 +630,7 @@ function catSection(title, cats, s){
   const body = cats.map(c => {
     const ca = s.byCat[c]||0, cb = bud(month,c);
     if(planMode) return `<div class="grid3"><span>${esc(nice(c))}</span>${numIn('cat|'+c,cb)}<span class="r num">${f(ca)}</span></div>`;
-    const p = cb>0 ? Math.min(100, ca/cb*100) : (ca>0?100:0);
+    const p = Math.max(0, cb>0 ? Math.min(100, ca/cb*100) : (ca>0?100:0));
     return `<button class="crow" data-cat="${esc(c)}"><div class="top"><span>${esc(nice(c))}</span>
       <span class="num"><b>${f(ca)}</b>${cb?' / '+f0(cb):''}</span></div>
       <div class="bar"><div class="${ca>cb?'over':''}" style="width:${p}%"></div></div></button>`;
@@ -1014,7 +1027,8 @@ function openEdit(id){
   const cats = [...new Set([...D.cats.filter(c => !c.hidden).map(c => c.name), e.cat])];
   $('bsBody').innerHTML = `<h2>Eintrag bearbeiten</h2>
     <div class="addbox" style="margin-top:0">
-      <label>Betrag<input id="edAmt" inputmode="decimal" value="${fmtIn(e.amt)}"></label>
+      <label>Betrag<input id="edAmt" inputmode="decimal" value="${fmtIn(Math.abs(e.amt))}"></label>
+      <label class="chkrow"><input type="checkbox" id="edRefund"${e.amt<0?' checked':''}> Rückerstattung (wird von der Kategorie abgezogen)</label>
       <label>Datum<input id="edDate" type="date" value="${e.date}"></label>
       <label>Kategorie<select id="edCat">${cats.map(c => `<option value="${esc(c)}"${c===e.cat?' selected':''}>${esc(nice(c))}</option>`).join('')}</select></label>
       <label>Notiz<input id="edNote" value="${esc(e.note||'')}" autocomplete="off"></label>
@@ -1030,7 +1044,7 @@ function saveEdit(){
   if(!(v > 0)) return toast('Bitte einen Betrag eingeben');
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast('Bitte ein Datum wählen');
   if(date !== e.date) delete e.xm;   // neues Datum: Monat neu bestimmen
-  Object.assign(e, {amt:Math.round(v*100)/100, date, cat:$('edCat').value, note:$('edNote').value.trim(), u:Date.now()});
+  Object.assign(e, {amt:($('edRefund').checked ? -1 : 1) * Math.round(v*100)/100, date, cat:$('edCat').value, note:$('edNote').value.trim(), u:Date.now()});
   closeSheet(); changed('exp'); toast('Eintrag gespeichert');
 }
 function deleteEdit(){
